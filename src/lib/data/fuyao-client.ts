@@ -1,3 +1,5 @@
+import { formatFetchError } from "./fetch-error";
+
 export type FuyaoFetch = (path: string, init?: RequestInit) => Promise<unknown>;
 
 export function createFuyaoFetch(
@@ -6,14 +8,19 @@ export function createFuyaoFetch(
   fetchImpl: typeof fetch = fetch,
 ): FuyaoFetch {
   return async (apiPath, init) => {
-    const res = await fetchImpl(`${baseUrl}${apiPath}`, {
-      ...init,
-      headers: {
-        "X-api-key": apiKey,
-        "Content-Type": "application/json",
-        ...(init?.headers as Record<string, string> | undefined),
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetchImpl(`${baseUrl}${apiPath}`, {
+        ...init,
+        headers: {
+          "X-api-key": apiKey,
+          "Content-Type": "application/json",
+          ...(init?.headers as Record<string, string> | undefined),
+        },
+      });
+    } catch (e) {
+      throw new Error(`fetch failed (${formatFetchError(e)})`);
+    }
     if (res.status === 429) throw new Error("fuyao rate limited (429)");
     const body = await res.json();
     return parseFuyaoEnvelope(body);

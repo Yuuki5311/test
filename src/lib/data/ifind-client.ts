@@ -1,3 +1,5 @@
+import { formatFetchError } from "./fetch-error";
+
 type PostJson = (
   url: string,
   headers: Record<string, string>,
@@ -17,11 +19,16 @@ export function createIfindClient(opts: {
   const post: PostJson =
     opts.postJson ??
     (async (url, headers, body) => {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        throw new Error(`fetch failed (${formatFetchError(e)})`);
+      }
       if (!res.ok) throw new Error(`ifind HTTP ${res.status}`);
       return res.json();
     });
