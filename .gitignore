@@ -50,3 +50,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# iFinD SKILL secrets
+ifind-finance-data/mcp_config.json
+/data/app-store.json
