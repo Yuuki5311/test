@@ -11,10 +11,8 @@
 
 请在 Vercel → Settings → Environment Variables 配置后 Redeploy：
 
-- `IFIND_MCP_TOKEN`（已有）
-- `FUYAO_API_KEY`（可选，无则用 fixture）
-- `DATA_MODE=auto`
-- `IFIND_ENABLED=auto`
+- 演示稳妥（推荐，避免外网超时）：`DATA_MODE=fixture`、`IFIND_ENABLED=off`
+- 真实行情：`FUYAO_API_KEY`、`IFIND_MCP_TOKEN`，并设 `DATA_MODE=auto`、`IFIND_ENABLED=auto`
 
 本地预览：
 
