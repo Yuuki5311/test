@@ -2,6 +2,13 @@
 
 自然语言智能选股与策略解释器：把模糊选股意图变成**可检查、可修改、可执行**的数据条件，基于真实/样本字段做确定性筛选，并解释入选/排除依据。
 
+## 公网访问
+
+**当前演示地址（Cloudflare Tunnel）：**  
+https://sales-among-floral-modification.trycloudflare.com
+
+> 该地址依赖本机进程保持运行；电脑休眠或关闭后会失效。若需长期稳定域名，请用 Vercel 登录后执行 `npx vercel --prod`。
+
 ## 启动
 
 ```bash
