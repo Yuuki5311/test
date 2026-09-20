@@ -1,103 +1,268 @@
-import Image from "next/image";
+"use client";
+
+import { useMemo, useState } from "react";
+import { IntentInput } from "@/components/IntentInput";
+import { ClarifyPanel } from "@/components/ClarifyPanel";
+import { ConditionEditor } from "@/components/ConditionEditor";
+import { ConflictBanner } from "@/components/ConflictBanner";
+import { ResultsTable } from "@/components/ResultsTable";
+import { StockExplainCard } from "@/components/StockExplainCard";
+import { DataSourceBadge } from "@/components/DataSourceBadge";
+import { CompareView } from "@/components/CompareView";
+import { Disclaimer } from "@/components/Disclaimer";
+import type { ClarifyQuestion, ScreenSpec } from "@/lib/schema/screen-spec";
+import type { Conflict } from "@/lib/engine/conflicts";
+import type { StockEval } from "@/lib/engine/evaluate";
+import type { StockExplanation } from "@/lib/explain/builder";
+
+type ScreenPayload = {
+  result: { included: StockEval[]; excluded: StockEval[]; dataMode: string };
+  explanations: StockExplanation[];
+  conflicts: Conflict[];
+  warnings: string[];
+  dataMode: string;
+  candidateSource: string;
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [intent, setIntent] = useState("经营改善、估值合理、走势相对稳定");
+  const [questions, setQuestions] = useState<ClarifyQuestion[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [spec, setSpec] = useState<ScreenSpec | null>(null);
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [screen, setScreen] = useState<ScreenPayload | null>(null);
+  const [tab, setTab] = useState<"included" | "excluded">("included");
+  const [selected, setSelected] = useState<string>();
+  const [impactNote, setImpactNote] = useState<string>("");
+  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [compare, setCompare] = useState<Parameters<typeof CompareView>[0]["payload"]>(null);
+  const [backtest, setBacktest] = useState<string>("");
+  const [monitorNote, setMonitorNote] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>("");
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const explanation = useMemo(() => {
+    if (!screen || !selected) return null;
+    return screen.explanations.find((e) => e.symbol === selected) ?? null;
+  }, [screen, selected]);
+
+  const post = async (url: string, body: unknown) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? res.statusText);
+    return json;
+  };
+
+  const onClarify = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const json = await post("/api/clarify", { text: intent });
+      setQuestions(json.questions);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onParse = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const json = await post("/api/parse", { text: intent, answers });
+      setSpec(json.spec);
+      setConflicts(json.conflicts ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onScreen = async () => {
+    if (!spec) return;
+    setBusy(true);
+    setError("");
+    try {
+      const json = (await post("/api/screen", { spec, intentText: intent })) as ScreenPayload;
+      setScreen(json);
+      setConflicts(json.conflicts ?? []);
+      setTab("included");
+      setSelected(json.result.included[0]?.symbol ?? json.result.excluded[0]?.symbol);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onImpact = async () => {
+    if (!spec || !screen) return;
+    const before = {
+      ...spec,
+      conditions: spec.conditions.map((c) =>
+        c.field === "pe_ttm" && c.op === "lte" ? c : c,
+      ),
+    };
+    // Compare current vs PE tightened by 20% for demo impact
+    const after = {
+      ...spec,
+      conditions: spec.conditions.map((c) => {
+        if (c.field === "pe_ttm" && typeof c.value === "number") {
+          return { ...c, value: Number((Number(c.value) * 0.8).toFixed(2)), label: `${c.label ?? c.id} (收紧)` };
+        }
+        if (c.field === "pe_ttm" && Array.isArray(c.value)) {
+          return { ...c, value: [c.value[0], Number((Number(c.value[1]) * 0.8).toFixed(2))] };
+        }
+        return c;
+      }),
+    };
+    const json = await post("/api/impact", { before, after });
+    setImpactNote(
+      `收紧 PE 条件后：入选 ${json.impact.beforeCount} → ${json.impact.afterCount}；新排除 ${json.impact.newlyExcluded.join(", ") || "无"}`,
+    );
+    void before;
+  };
+
+  const onSave = async () => {
+    if (!spec) return;
+    const saved = await post("/api/screens", { name: `策略-${intent.slice(0, 12)}`, spec });
+    setSavedIds((ids) => [...ids, saved.id].slice(-5));
+  };
+
+  const onCompare = async () => {
+    if (savedIds.length < 2) {
+      setError("请先保存至少两个策略再比较");
+      return;
+    }
+    const json = await post("/api/compare", { idA: savedIds[savedIds.length - 2], idB: savedIds[savedIds.length - 1] });
+    setCompare(json);
+  };
+
+  const onBacktest = async () => {
+    if (!spec) return;
+    const json = await post("/api/backtest", { spec });
+    setBacktest(
+      `${json.disclaimer} · ` +
+        json.series.map((s: { asOf: string; hitCount: number }) => `${s.asOf}:${s.hitCount}`).join(" / "),
+    );
+  };
+
+  const onMonitor = async () => {
+    if (!spec) return;
+    const json = await post("/api/monitor", { name: `监控-${intent.slice(0, 8)}`, spec });
+    setMonitorNote(`${json.note} · id=${json.id}`);
+  };
+
+  return (
+    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-10 md:px-8">
+      <header className="space-y-3">
+        <p className="brand-display text-5xl leading-none text-[var(--ink)] md:text-6xl">语意筛</p>
+        <p className="text-lg text-[var(--muted)]">IntentScreen · 自然语言 → 可检查条件 → 可解释筛选</p>
+        <Disclaimer />
+      </header>
+
+      <section className="space-y-3">
+        <IntentInput value={intent} onChange={setIntent} />
+        <div className="flex flex-wrap gap-2">
+          <button
+            data-testid="btn-clarify"
+            type="button"
+            disabled={busy}
+            className="rounded bg-[var(--ink)] px-4 py-2 text-sm text-white"
+            onClick={onClarify}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            澄清意图
+          </button>
+          <button
+            data-testid="btn-parse"
+            type="button"
+            disabled={busy}
+            className="rounded bg-[var(--accent)] px-4 py-2 text-sm text-white"
+            onClick={onParse}
           >
-            Read our docs
-          </a>
+            生成条件
+          </button>
+          <button
+            data-testid="btn-screen"
+            type="button"
+            disabled={busy || !spec}
+            className="rounded bg-[var(--accent-2)] px-4 py-2 text-sm text-white disabled:opacity-40"
+            onClick={onScreen}
+          >
+            运行筛选
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+        {error && <p className="text-sm text-red-700">{error}</p>}
+      </section>
+
+      {questions.length > 0 && (
+        <ClarifyPanel
+          questions={questions}
+          answers={answers}
+          onAnswer={(id, value) => setAnswers((a) => ({ ...a, [id]: value }))}
+        />
+      )}
+
+      {spec && (
+        <>
+          <ConflictBanner conflicts={conflicts} />
+          <ConditionEditor
+            spec={spec}
+            onChange={(next) => {
+              setSpec(next);
+            }}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onImpact}>
+              查看条件影响
+            </button>
+            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onSave}>
+              保存策略
+            </button>
+            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onCompare}>
+              比较已存策略
+            </button>
+            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onBacktest}>
+              轻量回测
+            </button>
+            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onMonitor}>
+              转监控
+            </button>
+          </div>
+          {impactNote && <p className="text-sm text-[var(--ink)]">{impactNote}</p>}
+          {backtest && <p className="text-sm text-[var(--muted)]">{backtest}</p>}
+          {monitorNote && <p className="text-sm text-[var(--accent)]">{monitorNote}</p>}
+        </>
+      )}
+
+      {screen && (
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-3">
+            <DataSourceBadge
+              dataMode={screen.dataMode}
+              candidateSource={screen.candidateSource}
+              warnings={screen.warnings}
+            />
+            <ResultsTable
+              included={screen.result.included}
+              excluded={screen.result.excluded}
+              tab={tab}
+              onTab={setTab}
+              onSelect={setSelected}
+              selected={selected}
+            />
+          </div>
+          <StockExplainCard explanation={explanation} />
+        </section>
+      )}
+
+      <CompareView payload={compare} />
+    </main>
   );
 }
