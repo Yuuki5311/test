@@ -4,10 +4,29 @@
 
 ## 公网访问
 
-**当前演示地址（Cloudflare Tunnel）：**  
-https://sales-among-floral-modification.trycloudflare.com
+当前环境尚未登录 Vercel，**稳定公网 URL 需你在本机完成一次登录部署**（约 2 分钟）：
 
-> 该地址依赖本机进程保持运行；电脑休眠或关闭后会失效。若需长期稳定域名，请用 Vercel 登录后执行 `npx vercel --prod`。
+```bash
+cd /Users/l/Desktop/test/nl-stock-screener
+npx vercel login          # 浏览器完成登录
+npx vercel --prod         # 按提示创建/关联项目
+```
+
+部署时在 Vercel 控制台或 CLI 中配置环境变量（与 `.env` 相同）：
+
+- `IFIND_MCP_TOKEN`（已有）
+- `FUYAO_API_KEY`（可选，无则用 fixture）
+- `DATA_MODE=auto`
+- `IFIND_ENABLED=auto`
+
+部署成功后 CLI 会打印类似 `https://xxx.vercel.app` 的地址，把该地址写回本 README「公网访问」一节即可用于提交。
+
+本地预览：
+
+```bash
+npm run build && npm run start -- -H 127.0.0.1 -p 3000
+# 打开 http://127.0.0.1:3000
+```
 
 ## 启动
 
