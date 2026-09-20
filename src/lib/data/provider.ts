@@ -53,8 +53,12 @@ export function createProvider(opts: ProviderOptions = {}) {
 
     async loadSnapshots(symbols: string[]) {
       const warnings: string[] = [];
+      const hasFuyaoKey = Boolean(process.env.FUYAO_API_KEY) || Boolean(opts.fuyaoFetch);
 
-      if (mode === "fixture") {
+      if (mode === "fixture" || (mode === "auto" && !hasFuyaoKey)) {
+        if (mode === "auto" && !hasFuyaoKey) {
+          warnings.push("未配置 FUYAO_API_KEY，DATA_MODE=auto 使用 fixture（非实时行情）");
+        }
         const { stocks } = loadFixtureSnapshots(symbols);
         return { stocks, dataMode: "fixture" as const, warnings };
       }

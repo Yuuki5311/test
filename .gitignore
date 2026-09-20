@@ -32,6 +32,17 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# local sqlite
+/data/app.db
+/data/app.db-*
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
+
 
 # vercel
 .vercel
