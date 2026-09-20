@@ -4,22 +4,17 @@
 
 ## 公网访问
 
-当前环境尚未登录 Vercel，**稳定公网 URL 需你在本机完成一次登录部署**（约 2 分钟）：
+**生产地址（提交用）：** https://nl-stock-screener-rho.vercel.app
 
-```bash
-cd /Users/l/Desktop/test/nl-stock-screener
-npx vercel login          # 浏览器完成登录
-npx vercel --prod         # 按提示创建/关联项目
-```
+- 项目：`l-e611/nl-stock-screener`
+- 控制台：https://vercel.com/l-e611/nl-stock-screener
 
-部署时在 Vercel 控制台或 CLI 中配置环境变量（与 `.env` 相同）：
+请在 Vercel → Settings → Environment Variables 配置后 Redeploy：
 
 - `IFIND_MCP_TOKEN`（已有）
 - `FUYAO_API_KEY`（可选，无则用 fixture）
 - `DATA_MODE=auto`
 - `IFIND_ENABLED=auto`
-
-部署成功后 CLI 会打印类似 `https://xxx.vercel.app` 的地址，把该地址写回本 README「公网访问」一节即可用于提交。
 
 本地预览：
 
