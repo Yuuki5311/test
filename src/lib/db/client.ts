@@ -15,6 +15,11 @@ export type MonitorRow = {
   spec_json: string;
   status: string;
   created_at: string;
+  last_run_at?: string | null;
+  included_count?: number | null;
+  excluded_count?: number | null;
+  result_json?: string | null;
+  run_error?: string | null;
 };
 
 type Store = {
@@ -66,10 +71,48 @@ export function insertScreenRow(row: ScreenRow) {
   writeStore(store);
 }
 
+export function deleteScreenRows(ids: string[]): number {
+  const drop = new Set(ids);
+  const store = readStore();
+  const before = store.screens.length;
+  store.screens = store.screens.filter((row) => !drop.has(row.id));
+  writeStore(store);
+  return before - store.screens.length;
+}
+
+export function listMonitorRows(): MonitorRow[] {
+  return readStore().monitors.sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export function getMonitorRow(id: string): MonitorRow | undefined {
+  return readStore().monitors.find((row) => row.id === id);
+}
+
 export function insertMonitorRow(row: MonitorRow) {
   const store = readStore();
   store.monitors.push(row);
   writeStore(store);
+}
+
+export function deleteMonitorRows(ids: string[]): number {
+  const drop = new Set(ids);
+  const store = readStore();
+  const before = store.monitors.length;
+  store.monitors = store.monitors.filter((row) => !drop.has(row.id));
+  writeStore(store);
+  return before - store.monitors.length;
+}
+
+export function updateMonitorResult(
+  id: string,
+  patch: Pick<MonitorRow, "last_run_at" | "included_count" | "excluded_count" | "result_json" | "run_error">,
+) {
+  const store = readStore();
+  const row = store.monitors.find((item) => item.id === id);
+  if (!row) return false;
+  Object.assign(row, patch);
+  writeStore(store);
+  return true;
 }
 
 export function parseSpec(json: string): ScreenSpec {

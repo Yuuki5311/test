@@ -306,6 +306,27 @@ async function enrichVolatility(
   return out;
 }
 
+/** 单只股票近月日K。优先实时请求，失败时用本地缓存。 */
+export async function loadRecentHistory(symbol: string): Promise<{ data: unknown; source: "fuyao" | "cache" }> {
+  const key = `${symbol}|1d`;
+  const fetchFn = fuyaoFetchFor({});
+  const end = Date.now();
+  const start = end - 30 * 24 * 60 * 60 * 1000;
+  if (fetchFn) {
+    try {
+      const data = await fetchHistorical(fetchFn, symbol, start, end);
+      return { data, source: "fuyao" };
+    } catch (e) {
+      const cached = readNamedCache("fuyao-price-cache.json", key);
+      if (cached) return { data: cached, source: "cache" };
+      throw e;
+    }
+  }
+  const cached = readNamedCache("fuyao-price-cache.json", key);
+  if (cached) return { data: cached, source: "cache" };
+  throw new Error("未配置扶摇密钥，且没有该股票的历史行情缓存");
+}
+
 async function fetchHistoricalCached(
   fetchFn: FuyaoFetch,
   symbol: string,

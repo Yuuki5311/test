@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { IntentInput } from "@/components/IntentInput";
 import { ClarifyPanel } from "@/components/ClarifyPanel";
 import { ConditionEditor } from "@/components/ConditionEditor";
@@ -9,6 +9,9 @@ import { ResultsTable } from "@/components/ResultsTable";
 import { StockExplainCard } from "@/components/StockExplainCard";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { CompareView } from "@/components/CompareView";
+import { SavedStrategyList, type SavedStrategy } from "@/components/SavedStrategyList";
+import { BacktestPanel, type BacktestPayload } from "@/components/BacktestPanel";
+import { MonitorTaskList, type MonitorSummary } from "@/components/MonitorTaskList";
 import { Disclaimer } from "@/components/Disclaimer";
 import type { ClarifyQuestion, ScreenSpec } from "@/lib/schema/screen-spec";
 import type { Conflict } from "@/lib/engine/conflicts";
@@ -68,10 +71,16 @@ export default function Home() {
   const [selected, setSelected] = useState<string>();
   const [impactNote, setImpactNote] = useState("");
   const [pipelineStatus, setPipelineStatus] = useState("");
-  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [savedScreens, setSavedScreens] = useState<SavedStrategy[]>([]);
+  const [selectedStrategyIds, setSelectedStrategyIds] = useState<string[]>([]);
   const [compare, setCompare] = useState<Parameters<typeof CompareView>[0]["payload"]>(null);
-  const [backtest, setBacktest] = useState("");
+  const [backtest, setBacktest] = useState<BacktestPayload | null>(null);
+  const [backtestSymbol, setBacktestSymbol] = useState("");
+  const [backtestBusy, setBacktestBusy] = useState(false);
+  const backtestRef = useRef<HTMLDivElement>(null);
   const [monitorNote, setMonitorNote] = useState("");
+  const [monitors, setMonitors] = useState<MonitorSummary[]>([]);
+  const [selectedMonitorIds, setSelectedMonitorIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -80,9 +89,30 @@ export default function Home() {
     return screen.explanations.find((e) => e.symbol === selected) ?? null;
   }, [screen, selected]);
 
-  const post = async (url: string, body: unknown) => {
+  const loadSaved = async () => {
+    const res = await fetch("/api/screens");
+    const json = (await res.json()) as { screens?: SavedStrategy[] };
+    setSavedScreens(json.screens ?? []);
+  };
+
+  const loadMonitors = async () => {
+    const res = await fetch("/api/monitors");
+    const json = (await res.json()) as { monitors?: MonitorSummary[] };
+    setMonitors(json.monitors ?? []);
+  };
+
+  useEffect(() => {
+    void loadSaved();
+    void loadMonitors();
+  }, []);
+
+  useEffect(() => {
+    if (backtest) backtestRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [backtest]);
+
+  const post = async (url: string, body: unknown, method: "POST" | "DELETE" = "POST") => {
     const res = await fetch(url, {
-      method: "POST",
+      method,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -172,34 +202,77 @@ export default function Home() {
   const onSave = async () => {
     if (!spec) return;
     const saved = await post("/api/screens", { name: `策略-${intent.slice(0, 12)}`, spec });
-    setSavedIds((ids) => [...ids, saved.id].slice(-5));
+    setSelectedStrategyIds((ids) => [...ids, saved.id]);
+    await loadSaved();
   };
 
   const onCompare = async () => {
-    if (savedIds.length < 2) {
-      setError("请先保存至少两个策略再比较");
+    if (selectedStrategyIds.length < 2) {
+      setError("请在已保存策略中至少勾选两个再比较");
       return;
     }
-    const json = await post("/api/compare", {
-      idA: savedIds[savedIds.length - 2],
-      idB: savedIds[savedIds.length - 1],
-    });
+    setError("");
+    const json = await post("/api/compare", { ids: selectedStrategyIds });
     setCompare(json);
   };
 
+  const onDeleteStrategies = async () => {
+    if (!selectedStrategyIds.length) {
+      setError("请先勾选要删除的策略");
+      return;
+    }
+    setError("");
+    try {
+      await post("/api/screens", { ids: selectedStrategyIds }, "DELETE");
+      const removed = new Set(selectedStrategyIds);
+      setSelectedStrategyIds([]);
+      setCompare((current) => (current?.items.some((item) => removed.has(item.id)) ? null : current));
+      await loadSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const onBacktest = async () => {
-    if (!spec) return;
-    const json = await post("/api/backtest", { spec });
-    setBacktest(
-      `${json.disclaimer} · ` +
-        json.series.map((s: { asOf: string; hitCount: number }) => `${s.asOf}:${s.hitCount}`).join(" / "),
-    );
+    const row = screen?.result.included.find((item) => item.symbol === backtestSymbol);
+    if (!row) {
+      setError("请先在入选列表勾选一只股票");
+      setTab("included");
+      return;
+    }
+    setError("");
+    setBacktestBusy(true);
+    try {
+      const json = (await post("/api/backtest", { symbol: row.symbol, name: row.name })) as BacktestPayload;
+      setBacktest(json);
+    } catch (e) {
+      setBacktest(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBacktestBusy(false);
+    }
   };
 
   const onMonitor = async () => {
     if (!spec) return;
     const json = await post("/api/monitor", { name: `监控-${intent.slice(0, 8)}`, spec });
-    setMonitorNote(`${json.note} · id=${json.id}`);
+    setMonitorNote(json.note);
+    await loadMonitors();
+  };
+
+  const onDeleteMonitors = async () => {
+    if (!selectedMonitorIds.length) {
+      setError("请先勾选要删除的监控任务");
+      return;
+    }
+    setError("");
+    try {
+      await post("/api/monitors", { ids: selectedMonitorIds }, "DELETE");
+      setSelectedMonitorIds([]);
+      await loadMonitors();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   return (
@@ -211,6 +284,16 @@ export default function Home() {
         </p>
         <Disclaimer />
       </header>
+
+      <MonitorTaskList
+        monitors={monitors}
+        selectedIds={selectedMonitorIds}
+        busy={busy}
+        onToggle={(id) =>
+          setSelectedMonitorIds((ids) => (ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]))
+        }
+        onDelete={onDeleteMonitors}
+      />
 
       <section className="space-y-3">
         <IntentInput
@@ -270,11 +353,14 @@ export default function Home() {
             <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onSave}>
               保存策略
             </button>
-            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onCompare}>
-              比较已存策略
-            </button>
-            <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onBacktest}>
-              轻量回测
+            <button
+              type="button"
+              data-testid="btn-backtest"
+              className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm disabled:opacity-40"
+              disabled={backtestBusy}
+              onClick={onBacktest}
+            >
+              {backtestBusy ? "回测中…" : "轻量回测"}
             </button>
             <button type="button" className="rounded border border-[var(--line)] bg-white px-3 py-1.5 text-sm" onClick={onMonitor}>
               转监控
@@ -285,7 +371,6 @@ export default function Home() {
               {impactNote}
             </p>
           )}
-          {backtest && <p className="text-sm text-[var(--muted)]">{backtest}</p>}
           {monitorNote && <p className="text-sm text-[var(--accent)]">{monitorNote}</p>}
         </>
       )}
@@ -305,11 +390,33 @@ export default function Home() {
               onTab={setTab}
               onSelect={setSelected}
               selected={selected}
+              checkedSymbol={backtestSymbol}
+              onCheck={(symbol) => {
+                setBacktestSymbol((current) => (current === symbol ? "" : symbol));
+                setTab("included");
+              }}
             />
           </div>
           <StockExplainCard explanation={explanation} />
         </section>
       )}
+
+      {backtest && (
+        <div ref={backtestRef}>
+          <BacktestPanel payload={backtest} />
+        </div>
+      )}
+
+      <SavedStrategyList
+        screens={savedScreens}
+        selectedIds={selectedStrategyIds}
+        busy={busy}
+        onToggle={(id) =>
+          setSelectedStrategyIds((ids) => (ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]))
+        }
+        onCompare={onCompare}
+        onDelete={onDeleteStrategies}
+      />
 
       <CompareView payload={compare} />
     </main>

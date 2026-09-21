@@ -1,26 +1,39 @@
 import { NextResponse } from "next/server";
 import { getScreen } from "@/lib/db/screens";
-import { computeImpact } from "@/lib/engine/impact";
 import { evaluateScreen } from "@/lib/engine/evaluate";
 import { createProvider } from "@/lib/data/provider";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { idA?: string; idB?: string };
-  const a = body.idA ? getScreen(body.idA) : null;
-  const b = body.idB ? getScreen(body.idB) : null;
-  if (!a || !b) return NextResponse.json({ error: "idA and idB required" }, { status: 400 });
+  const body = (await req.json()) as { ids?: string[]; idA?: string; idB?: string };
+  const ids = (body.ids?.length ? body.ids : [body.idA, body.idB]).filter((id): id is string => Boolean(id));
+  const screens = ids.map((id) => getScreen(id)).filter((screen) => screen != null);
+  if (screens.length < 2) {
+    return NextResponse.json({ error: "请至少选择两个已保存策略" }, { status: 400 });
+  }
 
   const provider = createProvider({ mode: "fixture" });
-  const { stocks } = await provider.loadSnapshots((await provider.resolveUniverse(a.spec)).symbols);
-  const evalA = evaluateScreen(a.spec, stocks);
-  const evalB = evaluateScreen(b.spec, stocks);
-  const impact = computeImpact(a.spec, b.spec, stocks);
+  const { stocks } = await provider.loadSnapshots((await provider.resolveUniverse(screens[0].spec)).symbols);
+  const items = screens.map((screen) => {
+    const included = evaluateScreen(screen.spec, stocks).included.map((row) => row.symbol);
+    return { id: screen.id, name: screen.name, count: included.length, symbols: included };
+  });
+  const base = items[0];
+  const baseSet = new Set(base.symbols);
+  const pairs = items.slice(1).map((other) => {
+    const otherSet = new Set(other.symbols);
+    return {
+      baseName: base.name,
+      otherName: other.name,
+      newlyIncluded: [...otherSet].filter((symbol) => !baseSet.has(symbol)),
+      newlyExcluded: [...baseSet].filter((symbol) => !otherSet.has(symbol)),
+    };
+  });
 
   return NextResponse.json({
-    a: { id: a.id, name: a.name, count: evalA.included.length },
-    b: { id: b.id, name: b.name, count: evalB.included.length },
-    impact,
+    items: items.map(({ id, name, count }) => ({ id, name, count })),
+    pairs,
+    note: "比较基于内置样本股票上的条件命中差异，不是收益对比，也不使用刚才的实时筛选结果。",
   });
 }
