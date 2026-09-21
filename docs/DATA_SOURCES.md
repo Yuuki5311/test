@@ -43,8 +43,8 @@
 |-----------------|------|------|
 | `pe_ttm` | `GET /api/a-share/valuations/snapshot` 的 `pe_ttm` | 行情快照不含估值 |
 | `name` | 同一估值快照的 `name` | 行情快照不含中文名 |
-| `roe_ttm` | `GET /api/a-share/financials/indicators` 的 `index_weighted_avg_roe` | 百分数÷100；只补前 24 只 |
-| `revenue_yoy` | 同一财务指标的 `operating_income_yoy_growth_ratio` | 百分数÷100 |
-| `volatility_20d` | 未接入（需逐票历史 K 线） | 缺失，不补 0 |
+| `roe_ttm` | `GET /api/a-share/financials/indicators` 的 `index_weighted_avg_roe` | 百分数÷100；逐只请求并在本地缓存 |
+| `revenue_yoy` | 同一财务指标的 `operating_income_yoy_growth_ratio` | 百分数÷100；逐只请求并在本地缓存 |
+| `volatility_20d` | 扶摇 `historical` 近20个交易日收盘价对数收益标准差×√252 | 逐只请求并缓存 |
 
 iFinD 交叉核对字段必须 `source=ifind`，且默认不作硬筛选唯一依据。

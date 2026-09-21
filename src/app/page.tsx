@@ -86,7 +86,13 @@ export default function Home() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const json = await res.json();
+    const raw = await res.text();
+    let json: Record<string, any> = {};
+    try {
+      json = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(raw.slice(0, 180) || `接口返回了空响应（${res.status}）`);
+    }
     if (!res.ok) throw new Error(json.error ?? res.statusText);
     return json;
   };

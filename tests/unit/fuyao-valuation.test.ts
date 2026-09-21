@@ -47,7 +47,7 @@ describe("fuyao valuation mapping", () => {
             abilities: [
               {
                 ability: "growth",
-                indicators: [{ index_id: "operating_income_yoy_growth_ratio", value: "15.5" }],
+                indicators: [{ index_id: "calculate_operating_income_yoy_growth_ratio", value: "15.5" }],
               },
               {
                 ability: "profitability",

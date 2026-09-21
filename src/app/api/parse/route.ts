@@ -10,7 +10,12 @@ export async function POST(req: Request) {
   if (!text) {
     return NextResponse.json({ error: "text required" }, { status: 400 });
   }
-  const spec = await parseIntent(text, body.answers ?? {});
-  const conflicts = detectConflicts(spec);
-  return NextResponse.json({ spec, conflicts });
+  try {
+    const spec = await parseIntent(text, body.answers ?? {});
+    const conflicts = detectConflicts(spec);
+    return NextResponse.json({ spec, conflicts });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: `条件解析失败：${message}` }, { status: 500 });
+  }
 }

@@ -1,8 +1,11 @@
 import type { ScreenSpec } from "@/lib/schema/screen-spec";
+import fs from "fs";
+import path from "path";
 import {
   createFuyaoFetch,
   fetchAshareTickers,
   fetchFinancialIndicators,
+  fetchHistorical,
   fetchValuationSnapshot,
   type FuyaoFetch,
 } from "./fuyao-client";
@@ -27,9 +30,8 @@ export interface ProviderOptions {
 
 /** 估值接口单次上限，也是本次真实股票池上限。 */
 export const FUYAO_UNIVERSE_CAP = 100;
-/** 财务指标是单票接口，只给前 N 只补 ROE / 营收同比，避免触发限流。 */
-const INDICATOR_ENRICH_CAP = 24;
 const INDICATOR_REPORTS = ["2025-4", "2025-2", "2024-4"];
+const INDICATOR_GAP_MS = 300;
 
 function resolveMode(opts: ProviderOptions): "auto" | "fuyao" | "fixture" {
   return opts.mode ?? (process.env.DATA_MODE as ProviderOptions["mode"]) ?? "auto";
@@ -131,14 +133,13 @@ export function createProvider(opts: ProviderOptions = {}) {
           if (!row) return emptySnapshot(symbol, "扶摇估值快照未返回该标的");
           return stockFromValuation(row, asOf);
         });
-        const enriched = await enrichIndicators(fetchFn!, stocks.slice(0, INDICATOR_ENRICH_CAP), warnings);
-        const rest = stocks.slice(INDICATOR_ENRICH_CAP);
-        if (rest.length) {
-          warnings.push(
-            `仅前 ${INDICATOR_ENRICH_CAP} 只请求了财务指标（ROE、营收同比）；其余标的这两项为 missing`,
-          );
+        const enriched = await enrichIndicators(fetchFn!, stocks, warnings, !opts.fuyaoFetch);
+        const withVol = await enrichVolatility(fetchFn!, enriched, warnings, !opts.fuyaoFetch);
+        const missing = withVol.filter((s) => s.fields.roe_ttm?.status !== "ok").length;
+        if (missing) {
+          warnings.push(`财务指标未补齐 ${missing} 只（接口失败或未披露），这些标的的 ROE、营收同比为 missing`);
         }
-        return { stocks: [...enriched, ...rest], dataMode: "fuyao" as const, warnings };
+        return { stocks: withVol, dataMode: "fuyao" as const, warnings };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         warnings.push(`扶摇调用失败：${msg}；已返回 error 状态字段，未使用虚构正常值`);
@@ -157,41 +158,201 @@ export function createProvider(opts: ProviderOptions = {}) {
   };
 }
 
-async function enrichIndicators(fetchFn: FuyaoFetch, stocks: StockSnapshot[], warnings: string[]) {
+async function enrichIndicators(
+  fetchFn: FuyaoFetch,
+  stocks: StockSnapshot[],
+  warnings: string[],
+  useCache: boolean,
+) {
   if (!stocks.length) return stocks;
-  const picked = await pickIndicatorReport(fetchFn, stocks[0].symbol);
+  const picked = await pickIndicatorReport(fetchFn, stocks[0].symbol, useCache);
   if (!picked) {
     warnings.push("财务指标接口无可用报告期，ROE 与营收同比保持 missing");
     return stocks;
   }
   const { report, data: firstData } = picked;
-  warnings.push(`财务指标报告期 ${report}（百分比已换算为比率）`);
+  warnings.push(`财务指标报告期 ${report}，逐只补齐本次 ${stocks.length} 只（百分数已换算为比率）`);
   const out: StockSnapshot[] = [applyIndicators(stocks[0], firstData, report)];
   for (const stock of stocks.slice(1)) {
+    await sleep(INDICATOR_GAP_MS);
     try {
-      const data = await fetchFinancialIndicators(fetchFn, stock.symbol, report);
+      const data = await fetchIndicatorCached(fetchFn, stock.symbol, report, useCache);
       out.push(applyIndicators(stock, data, report));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       warnings.push(`${stock.symbol} 财务指标失败：${msg}`);
       out.push(stock);
-      if (/429|限流|rate/i.test(msg)) {
-        warnings.push("财务指标触发限流，后续标的不再请求");
-        out.push(...stocks.slice(out.length));
-        break;
-      }
     }
   }
   return out;
 }
 
+async function fetchIndicatorCached(fetchFn: FuyaoFetch, symbol: string, report: string, useCache: boolean) {
+  if (useCache) {
+    const cached = readIndicatorCache(symbol, report);
+    if (cached) return cached;
+  }
+  const data = await fetchIndicatorWithRetry(fetchFn, symbol, report);
+  if (useCache) writeIndicatorCache(symbol, report, data);
+  return data;
+}
+
+async function fetchIndicatorWithRetry(fetchFn: FuyaoFetch, symbol: string, report: string) {
+  let waitMs = 1000;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await fetchFinancialIndicators(fetchFn, symbol, report);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/429|限流|rate/i.test(msg) || attempt === 3) throw e;
+      await sleep(waitMs);
+      waitMs *= 2;
+    }
+  }
+  throw new Error("财务指标重试后仍失败");
+}
+
+function indicatorCachePath() {
+  return path.join(process.cwd(), "data", "fuyao-indicator-cache.json");
+}
+
+function readIndicatorCache(symbol: string, report: string): unknown | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(indicatorCachePath(), "utf8")) as Record<string, unknown>;
+    return raw[`${symbol}|${report}`] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeIndicatorCache(symbol: string, report: string, data: unknown) {
+  const file = indicatorCachePath();
+  let store: Record<string, unknown> = {};
+  try {
+    store = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    store = {};
+  }
+  store[`${symbol}|${report}`] = data;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(store));
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function firstIndicator(data: unknown, ids: string[]): unknown {
+  for (const id of ids) {
+    const value = readIndicator(data, id);
+    if (value != null && value !== "") return value;
+  }
+  return null;
+}
+
+/** 近 20 个交易日对数收益的年化标准差。 */
+export function volatilityFromCloses(closes: number[]): number | null {
+  const rets: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    const prev = closes[i - 1];
+    const cur = closes[i];
+    if (prev > 0 && cur > 0) rets.push(Math.log(cur / prev));
+  }
+  const window = rets.slice(-20);
+  if (window.length < 10) return null;
+  const mean = window.reduce((sum, value) => sum + value, 0) / window.length;
+  const variance = window.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (window.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(252);
+}
+
+async function enrichVolatility(
+  fetchFn: FuyaoFetch,
+  stocks: StockSnapshot[],
+  warnings: string[],
+  useCache: boolean,
+) {
+  const end = Date.now();
+  const start = end - 50 * 24 * 60 * 60 * 1000;
+  const out: StockSnapshot[] = [];
+  for (const [index, stock] of stocks.entries()) {
+    if (index > 0) await sleep(INDICATOR_GAP_MS);
+    try {
+      const data = await fetchHistoricalCached(fetchFn, stock.symbol, start, end, useCache);
+      const closes = extractItems(data)
+        .map((row) => Number(row.close_price))
+        .filter((price) => Number.isFinite(price) && price > 0);
+      const vol = volatilityFromCloses(closes);
+      out.push({
+        ...stock,
+        fields: {
+          ...stock.fields,
+          volatility_20d: makeField("volatility_20d", vol == null ? null : Number(vol.toFixed(4)), {
+            source: "fuyao",
+            asOf: new Date().toISOString().slice(0, 10),
+            status: vol == null ? "missing" : "ok",
+            message:
+              vol == null
+                ? `历史K线不足以计算20日波动率（收盘价 ${closes.length} 个）`
+                : "由扶摇历史日K收盘价的近20日对数收益标准差年化",
+          }),
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      warnings.push(`${stock.symbol} 波动率计算失败：${msg}`);
+      out.push(stock);
+    }
+  }
+  return out;
+}
+
+async function fetchHistoricalCached(
+  fetchFn: FuyaoFetch,
+  symbol: string,
+  start: number,
+  end: number,
+  useCache: boolean,
+) {
+  const key = `${symbol}|1d`;
+  if (useCache) {
+    const cached = readNamedCache("fuyao-price-cache.json", key);
+    if (cached) return cached;
+  }
+  const data = await fetchHistorical(fetchFn, symbol, start, end);
+  if (useCache) writeNamedCache("fuyao-price-cache.json", key, data);
+  return data;
+}
+
+function readNamedCache(fileName: string, key: string): unknown | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", fileName), "utf8")) as Record<string, unknown>;
+    return raw[key] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeNamedCache(fileName: string, key: string, data: unknown) {
+  const file = path.join(process.cwd(), "data", fileName);
+  let store: Record<string, unknown> = {};
+  try {
+    store = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    store = {};
+  }
+  store[key] = data;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(store));
+}
+
 async function pickIndicatorReport(
   fetchFn: FuyaoFetch,
   symbol: string,
+  useCache: boolean,
 ): Promise<{ report: string; data: unknown } | null> {
   for (const report of INDICATOR_REPORTS) {
     try {
-      const data = await fetchFinancialIndicators(fetchFn, symbol, report);
+      const data = await fetchIndicatorCached(fetchFn, symbol, report, useCache);
       return { report, data };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -203,7 +364,12 @@ async function pickIndicatorReport(
 
 function applyIndicators(stock: StockSnapshot, data: unknown, report: string): StockSnapshot {
   const roe = percentToRatio(readIndicator(data, "index_weighted_avg_roe"));
-  const yoy = percentToRatio(readIndicator(data, "operating_income_yoy_growth_ratio"));
+  const yoy = percentToRatio(
+    firstIndicator(data, [
+      "calculate_operating_income_yoy_growth_ratio",
+      "operating_income_yoy_growth_ratio",
+    ]),
+  );
   return {
     ...stock,
     fields: {
