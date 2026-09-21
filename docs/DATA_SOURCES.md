@@ -41,9 +41,10 @@
 
 | ScreenSpec 字段 | 来源 | 说明 |
 |-----------------|------|------|
-| `pe_ttm` | 扶摇快照估值字段；缺失则 `missing` | 禁止用 0 填空 |
-| `roe_ttm` | 扶摇财务 / 推导 | null=未披露 → `missing` |
-| `revenue_yoy` | 利润表营收同比推导 | |
-| `volatility_20d` | historical 日收益标准差（年化近似） | |
+| `pe_ttm` | `GET /api/a-share/valuations/snapshot` 的 `pe_ttm` | 行情快照不含估值 |
+| `name` | 同一估值快照的 `name` | 行情快照不含中文名 |
+| `roe_ttm` | `GET /api/a-share/financials/indicators` 的 `index_weighted_avg_roe` | 百分数÷100；只补前 24 只 |
+| `revenue_yoy` | 同一财务指标的 `operating_income_yoy_growth_ratio` | 百分数÷100 |
+| `volatility_20d` | 未接入（需逐票历史 K 线） | 缺失，不补 0 |
 
 iFinD 交叉核对字段必须 `source=ifind`，且默认不作硬筛选唯一依据。
