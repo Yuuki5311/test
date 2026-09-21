@@ -4,15 +4,11 @@
 
 ## 公网访问
 
-**生产地址（提交用）：** https://nl-stock-screener-rho.vercel.app
+**提交用地址：** https://mathematics-mil-giants-summer.trycloudflare.com
 
-- 项目：`l-e611/nl-stock-screener`
-- 控制台：https://vercel.com/l-e611/nl-stock-screener
+这条链接通过 Cloudflare Tunnel 转到本机 `http://127.0.0.1:3000`。本机能访问扶摇和 iFinD，所以公网筛选可以使用真实数据。电脑需保持开机，且本地开发服务和 `cloudflared` 隧道不能关；隧道重启后地址会变。
 
-请在 Vercel → Settings → Environment Variables 配置后 Redeploy：
-
-- 演示稳妥（推荐，避免外网超时）：`DATA_MODE=fixture`、`IFIND_ENABLED=off`
-- 真实行情：`FUYAO_API_KEY`、`IFIND_MCP_TOKEN`，并设 `DATA_MODE=auto`、`IFIND_ENABLED=auto`
+Vercel 地址 https://nl-stock-screener-rho.vercel.app 仍在，但从香港节点连不上扶摇 / iFinD，会超时并降级为样本数据。
 
 本地预览：
 
@@ -73,4 +69,4 @@ npx vitest run
 
 - 无扶摇 Key 时默认 fixture；字段缺失为 `missing`/`error`，不静默填 0。
 - 产品禁止涨跌预测、收益承诺、直接买卖建议。
-- 部署 URL：本地可运行；公网部署需自行配置环境变量后发布（如 Vercel，注意 `better-sqlite3` 原生依赖，可用持久化卷或改文件存储）。
+- 公网提交地址走本机隧道：https://mathematics-mil-giants-summer.trycloudflare.com 。本机需保持运行；Vercel 香港节点访问扶摇 / iFinD 会超时。
